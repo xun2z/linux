@@ -131,7 +131,7 @@ static const struct snd_soc_dapm_route cnl_map[] = {
 
 static int cnl_rt274_init(struct snd_soc_pcm_runtime *runtime)
 {
-	struct snd_soc_codec *codec = runtime->codec;
+	struct snd_soc_component *component = runtime->codec_dai->component;
 	struct snd_soc_card *card = runtime->card;
 	struct snd_soc_dai *codec_dai = runtime->codec_dai;
 	int ret;
@@ -142,7 +142,7 @@ static int cnl_rt274_init(struct snd_soc_pcm_runtime *runtime)
 	if (ret)
 		return ret;
 
-	ret = snd_soc_codec_set_jack(codec, &cnl_headset, NULL);
+	ret = snd_soc_component_set_jack(component, &cnl_headset, NULL);
 	if (ret)
 		return ret;
 
