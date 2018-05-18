@@ -97,6 +97,7 @@ static const struct snd_soc_dapm_widget cnl_rt274_widgets[] = {
 			    SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
 };
 
+#if !IS_ENABLED(CONFIG_SND_SOC_SOF_INTEL)
 static int cnl_dmic_fixup(struct snd_soc_pcm_runtime *rtd,
 			  struct snd_pcm_hw_params *params)
 {
@@ -110,6 +111,7 @@ static int cnl_dmic_fixup(struct snd_soc_pcm_runtime *rtd,
 
 	return 0;
 }
+#endif
 
 static const struct snd_soc_dapm_route cnl_map[] = {
 	{"Headphone Jack", NULL, "HPO Pin"},
@@ -159,15 +161,17 @@ static int cnl_rt274_init(struct snd_soc_pcm_runtime *runtime)
 }
 
 static int cnl_be_fixup(struct snd_soc_pcm_runtime *rtd,
-			    struct snd_pcm_hw_params *params)
+			struct snd_pcm_hw_params *params)
 {
 	struct snd_interval *rate =
 		hw_param_interval(params, SNDRV_PCM_HW_PARAM_RATE);
 	struct snd_interval *channels =
 		hw_param_interval(params, SNDRV_PCM_HW_PARAM_CHANNELS);
 
-	rate->min = rate->max = CNL_BE_FIXUP_RATE;
-	channels->min = channels->max = 2;
+	rate->min = CNL_BE_FIXUP_RATE;
+	rate->max = CNL_BE_FIXUP_RATE;
+	channels->min = 2;
+	channels->max = 2;
 	snd_mask_none(hw_param_mask(params, SNDRV_PCM_HW_PARAM_FORMAT));
 	snd_mask_set(hw_param_mask(params, SNDRV_PCM_HW_PARAM_FORMAT),
 		     SNDRV_PCM_FORMAT_S24_LE);
@@ -191,6 +195,7 @@ static struct snd_soc_dai_link cnl_rt274_dailink[] = {
 		.dpcm_capture = 1,
 		.init = cnl_rt274_init,
 	},
+#if !IS_ENABLED(CONFIG_SND_SOC_SOF_INTEL)
 	{
 		.name = "dmic01",
 		.cpu_dai_name = "DMIC01 Pin",
@@ -202,6 +207,7 @@ static struct snd_soc_dai_link cnl_rt274_dailink[] = {
 		.ignore_suspend = 1,
 		.dpcm_capture = 1,
 	},
+#endif
 };
 
 static int
