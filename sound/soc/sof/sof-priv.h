@@ -24,6 +24,7 @@
 #include <uapi/sound/asoc.h>
 #include <sound/hdaudio.h>
 #include <sound/compress_driver.h>
+#include "../../pci/hda/hda_codec.h"
 
 /* debug flags */
 #define SOF_DBG_REGS	BIT(1)
@@ -307,6 +308,9 @@ struct snd_sof_dev {
 	u64 irq_status;
 	int ipc_irq;
 	u32 next_comp_id; /* monotonic - reset during S3 */
+
+	/* hda bus */
+	struct hda_bus *hbus;
 
 	/* memory bases for mmaped DSPs - set by dsp_init() */
 	void __iomem *bar[SND_SOF_BARS];	/* DSP base address */
