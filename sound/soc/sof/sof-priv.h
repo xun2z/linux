@@ -297,7 +297,8 @@ struct snd_sof_dev {
 	/* DSP HW differentiation */
 	struct snd_sof_pdata *pdata;
 	const struct snd_sof_dsp_ops *ops;
-	struct sof_intel_hda_dev *hda;	/* for HDA based DSP HW */
+	struct sof_intel_hda_dev *hda;	/* for HDA based DSP HW FIXME: delete this and use hbus instead */
+	struct hda_bus *hbus;
 	const struct sof_arch_ops *arch_ops;
 
 	/* IPC */
@@ -308,9 +309,6 @@ struct snd_sof_dev {
 	u64 irq_status;
 	int ipc_irq;
 	u32 next_comp_id; /* monotonic - reset during S3 */
-
-	/* hda bus */
-	struct hda_bus *hbus;
 
 	/* memory bases for mmaped DSPs - set by dsp_init() */
 	void __iomem *bar[SND_SOF_BARS];	/* DSP base address */
