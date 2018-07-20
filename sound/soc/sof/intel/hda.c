@@ -30,6 +30,16 @@
 #include <sound/pcm_params.h>
 #include <linux/pm_runtime.h>
 
+/* platform specific devices */
+#include "shim.h"
+
+#include <sound/hda_register.h>
+#include <sound/hdaudio.h>
+#include <sound/hda_i915.h>
+
+#include "../../../pci/hda/hda_codec.h"
+#include "../../codecs/hdac_hda.h"
+
 #include "../sof-priv.h"
 #include "../ops.h"
 #include "hda.h"
@@ -297,36 +307,249 @@ static const struct sof_intel_dsp_desc *get_chip_info(int pci_id)
 	return NULL;
 }
 
-/*
- * We don't need to do a full HDA codec probe as external HDA codec mode is
- * considered legacy and will not be supported under SOF. HDMI/DP HDA will
- * be supported in the DSP.
- */
-int hda_dsp_probe(struct snd_sof_dev *sdev)
+#if IS_ENABLED(CONFIG_SND_SOC_SOF_HDA)
+static void sof_enable_miscbdcge(struct snd_sof_dev *sdev, bool enable)
 {
-	struct pci_dev *pci = sdev->pci;
-	struct sof_intel_hda_dev *hdev;
-	struct sof_intel_hda_stream *stream;
-	const struct sof_intel_dsp_desc *chip;
-	int i;
-	int ret = 0;
+	u32 val;
 
-	/* set DSP arch ops */
-	sdev->arch_ops = &sof_xtensa_arch_ops;
+	val = enable ? PCI_CGCTL_MISCBDCGE_MASK : 0;
 
-	chip = get_chip_info(pci->device);
-	if (!chip) {
-		dev_err(sdev->dev, "no such device supported, chip id:%x\n",
-			pci->device);
-		ret = -EIO;
-		goto err;
+	snd_sof_pci_update_bits(sdev, PCI_CGCTL, PCI_CGCTL_MISCBDCGE_MASK, val);
+}
+
+/*
+ * While performing reset, controller may not come back properly causing
+ * issues, so recommendation is to set CGCTL.MISCBDCGE to 0 then do reset
+ * (init chip) and then again set CGCTL.MISCBDCGE to 1
+ */
+static int sof_hda_init_chip(struct snd_sof_dev *sdev, bool full_reset)
+{
+	struct hdac_bus *bus = &sdev->hbus->core;
+	int ret;
+
+	sof_enable_miscbdcge(sdev, false);
+	ret = snd_hdac_bus_init_chip(bus, full_reset);
+	sof_enable_miscbdcge(sdev, true);
+
+	return ret;
+}
+
+irqreturn_t sof_hda_stream_interrupt(int irq, void *context)
+{
+	struct hdac_bus *bus = context;
+	u32 status;
+
+	if (!pm_runtime_active(bus->dev))
+		return IRQ_NONE;
+
+	spin_lock(&bus->reg_lock);
+
+	status = snd_hdac_chip_readl(bus, INTSTS);
+	if (status == 0 || status == 0xffffffff) {
+		spin_unlock(&bus->reg_lock);
+		return IRQ_NONE;
 	}
 
-	hdev = devm_kzalloc(&pci->dev, sizeof(*hdev), GFP_KERNEL);
-	if (!hdev)
+	/* clear rirb int */
+	status = snd_hdac_chip_readb(bus, RIRBSTS);
+	if (status & RIRB_INT_MASK) {
+		if (status & RIRB_INT_RESPONSE)
+			snd_hdac_bus_update_rirb(bus);
+		snd_hdac_chip_writeb(bus, RIRBSTS, RIRB_INT_MASK);
+	}
+
+	spin_unlock(&bus->reg_lock);
+
+	return snd_hdac_chip_readl(bus, INTSTS) ? IRQ_WAKE_THREAD : IRQ_HANDLED;
+}
+
+/* called from IRQ */
+static void sof_stream_update(struct hdac_bus *bus, struct hdac_stream *hstr)
+{
+	snd_pcm_period_elapsed(hstr->substream);
+}
+
+irqreturn_t sof_hda_stream_threaded_handler(int irq, void *context)
+{
+	struct hdac_bus *bus = context;
+	u32 status;
+
+	status = snd_hdac_chip_readl(bus, INTSTS);
+
+	snd_hdac_bus_handle_stream_irq(bus, status, sof_stream_update);
+
+	return IRQ_HANDLED;
+}
+
+static int sof_hda_acquire_irq(struct hda_bus *hbus, int do_disconnect)
+{
+	int ret;
+
+	/* register our IRQ */
+	ret = request_threaded_irq(hbus->pci->irq, sof_hda_stream_interrupt,
+				   sof_hda_stream_threaded_handler,
+				    IRQF_SHARED, "AudioHDA", &hbus->core);
+
+	if (ret) {
+		dev_err(hbus->core.dev,
+			"unable to grab IRQ %d, disabling device\n",
+			hbus->pci->irq);
+		return ret;
+	}
+
+	hbus->core.irq = hbus->pci->irq;
+	pci_intx(hbus->pci, 1);
+
+	return 0;
+}
+
+static int sof_hdac_first_init(struct snd_sof_dev *sdev)
+{
+	struct hda_bus *hbus = sdev->hbus;
+	struct hdac_bus *bus = &hbus->core;
+	struct pci_dev *pci = hbus->pci;
+	int err;
+	unsigned short gcap;
+
+	bus->addr = pci_resource_start(pci, 0);
+	bus->remap_addr = pci_ioremap_bar(pci, 0);
+	if (bus->remap_addr == NULL) {
+		dev_err(bus->dev, "ioremap error\n");
+		return -ENXIO;
+	}
+
+	sof_hda_init_chip(sdev, true);
+
+	snd_hdac_bus_parse_capabilities(bus);
+
+	if (sof_hda_acquire_irq(hbus, 0) < 0)
+		return -EBUSY;
+
+	/* update BARs for sof, don't need parse them again */
+	sdev->bar[HDA_DSP_HDA_BAR] = bus->remap_addr;
+	sdev->bar[HDA_DSP_PP_BAR] = bus->ppcap;
+	sdev->bar[HDA_DSP_SPIB_BAR] = bus->spbcap;
+	sdev->bar[HDA_DSP_DRSM_BAR] = bus->drsmcap;
+
+	return 0;
+}
+
+#define IDISP_INTEL_VENDOR_ID	0x80860000
+
+/*
+ * load the legacy codec driver
+ */
+static void sof_load_codec_module(struct hda_codec *codec)
+{
+#ifdef MODULE
+	char modalias[MODULE_NAME_LEN];
+	const char *mod = NULL;
+
+	snd_hdac_codec_modalias(&codec->core, modalias, sizeof(modalias));
+	mod = modalias;
+	dev_dbg(&codec->core.dev, "loading %s codec module\n", mod);
+	request_module(mod);
+#endif
+}
+
+/*
+ * Probe the given codec address
+ */
+static int sof_probe_hda_codec(struct hda_bus *hbus, int addr)
+{
+	unsigned int cmd = (addr << 28) | (AC_NODE_ROOT << 20) |
+		(AC_VERB_PARAMETERS << 8) | AC_PAR_VENDOR_ID;
+	unsigned int res = -1;
+	struct hdac_hda_priv *hda_codec;
+	struct hdac_device *hdev;
+	int err;
+
+	mutex_lock(&hbus->core.cmd_mutex);
+	snd_hdac_bus_send_cmd(&hbus->core, cmd);
+	snd_hdac_bus_get_response(&hbus->core, addr, &res);
+	mutex_unlock(&hbus->core.cmd_mutex);
+	if (res == -1)
+		return -EIO;
+	dev_dbg(hbus->core.dev, "codec #%d probed OK: %x\n", addr, res);
+
+	hda_codec = devm_kzalloc(&hbus->pci->dev, sizeof(*hda_codec),
+				 GFP_KERNEL);
+	if (!hda_codec)
 		return -ENOMEM;
-	sdev->hda = hdev;
-	hdev->desc = chip;
+
+	hda_codec->codec.bus = hbus;
+	hdev = &hda_codec->codec.core;
+
+	err = snd_hdac_ext_bus_device_init(&hbus->core, addr, hdev);
+	if (err < 0)
+		return err;
+
+	/* use legacy bus only for HDA codecs, idisp uses ext bus */
+	if ((res & 0xFFFF0000) != IDISP_INTEL_VENDOR_ID) {
+		hdev->type = HDA_DEV_LEGACY;
+		sof_load_codec_module(&hda_codec->codec);
+	}
+	return 0;
+}
+
+/* Codec initialization */
+static void sof_hda_codec_create(struct snd_sof_dev *sdev)
+{
+	struct hda_bus *hbus = sdev->hbus;
+	struct hdac_bus *bus = &hbus->core;
+	int c, max_slots;
+
+	max_slots = HDA_MAX_CODECS;
+
+	/* First try to probe all given codec slots */
+	for (c = 0; c < max_slots; c++) {
+		if ((bus->codec_mask & (1 << c))) {
+			if (sof_probe_hda_codec(hbus, c) < 0) {
+				/*
+				 * Some BIOSen give you wrong codec addresses
+				 * that don't exist
+				 */
+				dev_warn(bus->dev,
+					 "Codec #%d probe error; disabling it...\n", c);
+				bus->codec_mask &= ~(1 << c);
+				/*
+				 * More badly, accessing to a non-existing
+				 * codec often screws up the controller bus,
+				 * and disturbs the further communications.
+				 * Thus if an error occurs during probing,
+				 * better to reset the controller bus to get
+				 * back to the sanity state.
+				 */
+				snd_hdac_bus_stop_chip(bus);
+				sof_hda_init_chip(sdev, true);
+			}
+		}
+	}
+}
+
+static int sof_i915_init(struct hdac_bus *bus)
+{
+	int err;
+
+	/*
+	 * The HDMI codec is in GPU so we need to ensure that it is powered
+	 * up and ready for probe
+	 */
+	err = snd_hdac_i915_init(bus);
+	if (err < 0)
+		return err;
+
+	err = snd_hdac_display_power(bus, true);
+	if (err < 0)
+		dev_err(bus->dev, "Cannot turn on display power on i915\n");
+
+	return err;
+}
+
+#else
+static int sof_first_init(struct snd_sof_dev *sdev)
+{
+	struct pci_dev *pci = sdev->pci;
 
 	/* HDA base */
 	sdev->bar[HDA_DSP_HDA_BAR] = pci_ioremap_bar(pci, HDA_DSP_HDA_BAR);
@@ -341,14 +564,85 @@ int hda_dsp_probe(struct snd_sof_dev *sdev)
 		return -ENXIO;
 	}
 
+	/* get controller capabilities */
+	return hda_dsp_ctrl_get_caps(sdev);
+}
+#endif
+
+/*
+ * We don't need to do a full HDA codec probe as external HDA codec mode is
+ * considered legacy and will not be supported under SOF. HDMI/DP HDA will
+ * be supported in the DSP.
+ */
+int hda_dsp_probe(struct snd_sof_dev *sdev)
+{
+	struct pci_dev *pci = sdev->pci;
+	struct sof_intel_hda_dev *hdev;
+	struct sof_intel_hda_stream *stream;
+#if IS_ENABLED(CONFIG_SND_SOC_SOF_HDA)
+	struct hda_bus *hbus;
+	struct hdac_bus *bus;
+	struct hdac_ext_bus_ops *ext_ops;
+	struct hdac_ext_link *hlink = NULL;
+#endif
+	const struct sof_intel_dsp_desc *chip;
+	int i;
+	int ret = 0;
+
+	/* set DSP arch ops */
+	sdev->arch_ops = &sof_xtensa_arch_ops;
+
+	chip = get_chip_info(pci->device);
+	if (!chip) {
+		dev_err(sdev->dev, "no such device supported, chip id:%x\n",
+			pci->device);
+		return -EIO;
+	}
+
+	hdev = devm_kzalloc(&pci->dev, sizeof(*hdev), GFP_KERNEL);
+	if (!hdev)
+		return -ENOMEM;
+	sdev->hda = hdev;
+	hdev->desc = chip;
+
+#if IS_ENABLED(CONFIG_SND_SOC_SOF_HDA)
+	hbus = devm_kzalloc(&pci->dev, sizeof(*hbus), GFP_KERNEL);
+	if (!hbus)
+		return -ENOMEM;
+
+	sdev->hbus = hbus;
+	bus = &hbus->core;
+
+	/* HDA bus init */
+#if IS_ENABLED(CONFIG_SND_SOC_HDAC_HDA)
+	ext_ops = snd_soc_hdac_hda_get_ops();
+#endif
+	snd_hdac_ext_bus_init(bus, &pci->dev, NULL, NULL, ext_ops);
+	bus->use_posbuf = 1;
+	bus->bdl_pos_adj = 0;
+
+	mutex_init(&hbus->prepare_mutex);
+	hbus->pci = pci;
+	hbus->mixer_assigned = -1;
+	hbus->modelname = "sofbus";
+#endif
+
+#if IS_ENABLED(CONFIG_SND_SOC_SOF_HDA)
+	/* initialise hdac bus */
+	ret = sof_hdac_first_init(sdev);
+#else
+	/* initialise resources for non-HDA */
+	ret = sof_first_init(sdev);
+#endif
+	if (ret < 0)
+		return ret;
+
 	/* DSP base */
 	sdev->bar[HDA_DSP_BAR] = pci_ioremap_bar(pci, HDA_DSP_BAR);
 	if (!sdev->bar[HDA_DSP_BAR]) {
 		dev_err(&pci->dev, "error: ioremap error\n");
-		ret = -ENXIO;
-		goto err;
+		return -ENXIO;
 	}
-
 	sdev->mmio_bar = HDA_DSP_BAR;
 	sdev->mailbox_bar = HDA_DSP_BAR;
 
@@ -357,19 +651,10 @@ int hda_dsp_probe(struct snd_sof_dev *sdev)
 
 	/* allow 64bit DMA address if supported by H/W */
 	if (!dma_set_mask(&pci->dev, DMA_BIT_MASK(64))) {
-		dev_dbg(&pci->dev, "DMA mask is 64 bit\n");
 		dma_set_coherent_mask(&pci->dev, DMA_BIT_MASK(64));
 	} else {
-		dev_dbg(&pci->dev, "DMA mask is 32 bit\n");
 		dma_set_mask(&pci->dev, DMA_BIT_MASK(32));
 		dma_set_coherent_mask(&pci->dev, DMA_BIT_MASK(32));
-	}
-
-	/* get controller capabilities */
-	ret = hda_dsp_ctrl_get_caps(sdev);
-	if (ret < 0) {
-		dev_err(&pci->dev, "error: failed to find DSP capability\n");
-		goto err;
 	}
 
 	/* init streams */
@@ -380,35 +665,69 @@ int hda_dsp_probe(struct snd_sof_dev *sdev)
 		 * not all errors are due to memory issues, but trying
 		 * to free everything does not harm
 		 */
-		goto stream_err;
+		return ret;
+	}
+
+	/* initialize chip */
+	snd_sof_pci_update_bits(sdev, PCI_TCSEL, 0x07, 0);
+
+#if IS_ENABLED(CONFIG_SND_SOC_SOF_HDA)
+	sof_hda_init_chip(sdev, true);
+
+	device_disable_async_suspend(bus->dev);
+
+	/* check if dsp is there */
+	if (bus->ppcap)
+		dev_dbg(&pci->dev, "PP capbility, will probe DSP later.\n");
+
+	if (bus->mlcap)
+		snd_hdac_ext_bus_get_ml_capabilities(bus);
+
+	snd_hdac_bus_stop_chip(bus);
+
+
+	/* probe i915 and HDA codecs */
+	if (IS_ENABLED(CONFIG_SND_SOC_HDAC_HDMI)) {
+		ret = sof_i915_init(bus);
+		if (ret < 0)
+			goto free_streams;
+	}
+
+	ret = sof_hda_init_chip(sdev, true);
+	if (ret < 0) {
+		dev_err(bus->dev, "Init chip failed with ret: %d\n", ret);
+		if (IS_ENABLED(CONFIG_SND_SOC_HDAC_HDMI))
+			snd_hdac_display_power(bus, false);
+		goto free_streams;
+	}
+
+	/* codec detection */
+	if (!bus->codec_mask)
+		dev_info(bus->dev, "no hda codecs found!\n");
+
+	/* create codec instances */
+	sof_hda_codec_create(sdev);
+
+	if (IS_ENABLED(CONFIG_SND_SOC_HDAC_HDMI)) {
+		ret = snd_hdac_display_power(bus, false);
+		if (ret < 0) {
+			dev_err(bus->dev, "Cannot turn off display power on i915\n");
+			goto free_streams;
+		}
 	}
 
 	/*
-	 * clear bits 0-2 of PCI register TCSEL (at offset 0x44)
-	 * TCSEL == Traffic Class Select Register, which sets PCI express QOS
-	 * Ensuring these bits are 0 clears playback static on some HD Audio
-	 * codecs. PCI register TCSEL is defined in the Intel manuals.
+	 * we are done probing so decrement link counts
 	 */
-	snd_sof_pci_update_bits(sdev, PCI_TCSEL, 0x07, 0);
-
-	/*
-	 * while performing reset, controller may not come back properly causing
-	 * issues, so recommendation is to set CGCTL.MISCBDCGE to 0 then do
-	 * reset (init chip) and then again set CGCTL.MISCBDCGE to 1
-	 */
-	snd_sof_pci_update_bits(sdev, PCI_CGCTL,
-				PCI_CGCTL_MISCBDCGE_MASK, 0);
-
-	/* clear WAKESTS */
-	snd_sof_dsp_update_bits(sdev, HDA_DSP_HDA_BAR, SOF_HDA_WAKESTS,
-				SOF_HDA_WAKESTS_INT_MASK,
-				SOF_HDA_WAKESTS_INT_MASK);
+	list_for_each_entry(hlink, &bus->hlink_list, list)
+		snd_hdac_ext_bus_link_put(bus, hlink);
+#endif
 
 	/* reset HDA controller */
 	ret = hda_dsp_ctrl_link_reset(sdev);
 	if (ret < 0) {
 		dev_err(&pci->dev, "error: failed to reset HDA controller\n");
-		goto stream_err;
+		goto free_streams;
 	}
 
 	/* clear stream status */
@@ -446,34 +765,7 @@ int hda_dsp_probe(struct snd_sof_dev *sdev)
 				SOF_HDA_INT_CTRL_EN | SOF_HDA_INT_GLOBAL_EN,
 				SOF_HDA_INT_CTRL_EN | SOF_HDA_INT_GLOBAL_EN);
 
-	/*
-	 * register our IRQ
-	 * let's try to enable msi firstly
-	 * if it fails, use legacy interrupt mode
-	 * TODO: support interrupt mode selection with kernel parameter
-	 *       support msi multiple vectors
-	 */
-	ret = pci_alloc_irq_vectors(pci, 1, 1, PCI_IRQ_MSI);
-	if (ret < 0) {
-		dev_info(sdev->dev, "use legacy interrupt mode\n");
-		sdev->hda->irq = pci->irq;
-		sdev->ipc_irq = pci->irq;
-	} else {
-		dev_info(sdev->dev, "use msi interrupt mode\n");
-		sdev->hda->irq = pci_irq_vector(pci, 0);
-		/* ipc irq number is the same of hda irq */
-		sdev->ipc_irq = sdev->hda->irq;
-	}
-
-	dev_dbg(sdev->dev, "using HDA IRQ %d\n", sdev->hda->irq);
-	ret = request_threaded_irq(sdev->hda->irq, hda_dsp_stream_interrupt,
-				   hda_dsp_stream_threaded_handler,
-				   IRQF_SHARED, "AudioHDA", sdev);
-	if (ret < 0) {
-		dev_err(sdev->dev, "error: failed to register HDA IRQ %d\n",
-			sdev->hda->irq);
-		goto stream_err;
-	}
+	sdev->ipc_irq = pci->irq;
 
 	dev_dbg(sdev->dev, "using IPC IRQ %d\n", sdev->ipc_irq);
 	ret = request_threaded_irq(sdev->ipc_irq, hda_dsp_ipc_irq_handler,
@@ -482,7 +774,7 @@ int hda_dsp_probe(struct snd_sof_dev *sdev)
 	if (ret < 0) {
 		dev_err(sdev->dev, "error: failed to register IPC IRQ %d\n",
 			sdev->ipc_irq);
-		goto irq_err;
+		goto free_streams;
 	}
 
 	/* re-enable CGCTL.MISCBDCGE after reset */
@@ -508,15 +800,9 @@ int hda_dsp_probe(struct snd_sof_dev *sdev)
 
 	return 0;
 
-irq_err:
-	free_irq(sdev->hda->irq, sdev);
-stream_err:
-	pci_free_irq_vectors(pci);
+free_streams:
 	hda_dsp_stream_free(sdev);
-err:
-	/* disable DSP */
-	snd_sof_dsp_update_bits(sdev, HDA_DSP_PP_BAR, SOF_HDA_REG_PP_PPCTL,
-				SOF_HDA_PPCTL_GPROCEN, 0);
+
 	return ret;
 }
 
@@ -542,7 +828,6 @@ int hda_dsp_remove(struct snd_sof_dev *sdev)
 				SOF_HDA_PPCTL_GPROCEN, 0);
 
 	free_irq(sdev->ipc_irq, sdev);
-	free_irq(sdev->pci->irq, sdev);
 	pci_free_irq_vectors(pci);
 
 	hda_dsp_stream_free(sdev);
