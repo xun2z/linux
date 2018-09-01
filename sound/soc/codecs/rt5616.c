@@ -1313,7 +1313,8 @@ static const struct snd_soc_codec_driver soc_codec_dev_rt5616 = {
 static const struct regmap_config rt5616_regmap = {
 	.reg_bits = 8,
 	.val_bits = 16,
-	.use_single_rw = true,
+	.use_single_read = true,
+	.use_single_write = true,
 	.max_register = RT5616_DEVICE_ID + 1 + (ARRAY_SIZE(rt5616_ranges) *
 					       RT5616_PR_SPACING),
 	.volatile_reg = rt5616_volatile_register,
