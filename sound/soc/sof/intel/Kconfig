@@ -1,3 +1,14 @@
+config SND_SOC_SOF_SPIDSP
+	tristate "SOF support over the SPI bus"
+	depends on SND_SOC_SOF
+	depends on SPI
+	select SND_SOC_SOF_SPI
+	help
+	  This adds support for Sound Open Firmware over SPI for Device
+	  Tree based systems.
+	  Say Y if you have such a device.
+	  If unsure select "N".
+
 config SND_SOC_SOF_INTEL
 	tristate "SOF support for Intel audio DSPs"
 	depends on SND_SOC_SOF
