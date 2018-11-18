@@ -340,20 +340,6 @@ endif ## SND_SOC_INTEL_SKYLAKE
 
 if SND_SOC_INTEL_SKYLAKE || SND_SOC_SOF_HDA_AUDIO_CODEC
 
-config SND_SOC_INTEL_SKL_HDA_DSP_GENERIC_MACH
-	tristate "SKL/KBL/BXT/APL with HDA Codecs"
-	select SND_SOC_HDAC_HDMI
-	select SND_SOC_HDAC_HDA
-	help
-	  This adds support for ASoC machine driver for Intel platforms
-	  SKL/KBL/BXT/APL with iDisp, HDA audio codecs.
-          Say Y or m if you have such a device. This is a recommended option.
-	  If unsure select "N".
-
-endif ## SND_SOC_INTEL_SKYLAKE || SND_SOC_SOF_HDA
-
-if SND_SOC_INTEL_SKYLAKE || SND_SOC_SOF_GEMINILAKE && SND_SOC_SOF_HDA_LINK
-
 config SND_SOC_INTEL_GLK_RT5682_MAX98357A_MACH
 	tristate "ASoC Audio driver for Geminilake with RT5682 and MAX98357A in I2S Mode"
 	depends on SND_SOC_INTEL_MACH
@@ -386,5 +372,19 @@ config SND_SOC_INTEL_CNL_RT274_MACH
 	   If unsure select "N".
 
 endif ## SND_SOC_INTEL_SKYLAKE || SND_SOC_SOF_CANNONLAKE
+
+if SND_SOC_INTEL_SKYLAKE_HDAUDIO_CODEC
+
+config SND_SOC_INTEL_SKL_HDA_DSP_GENERIC_MACH
+	tristate "SKL/KBL/BXT/APL with HDA Codecs"
+	select SND_SOC_HDAC_HDMI
+	# SND_SOC_HDAC_HDA is already selected
+	help
+	  This adds support for ASoC machine driver for Intel platforms
+	  SKL/KBL/BXT/APL with iDisp, HDA audio codecs.
+          Say Y or m if you have such a device. This is a recommended option.
+	  If unsure select "N".
+
+endif ## SND_SOC_INTEL_SKYLAKE_HDAUDIO_CODEC
 
 endif ## SND_SOC_INTEL_MACH
