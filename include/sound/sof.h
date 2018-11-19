@@ -18,7 +18,6 @@
 #include <linux/platform_device.h>
 #include <linux/pci.h>
 #include <sound/soc-acpi.h>
-#include <uapi/sound/sof-ipc.h>
 
 struct snd_sof_dsp_ops;
 
@@ -58,9 +57,6 @@ struct snd_sof_pdata {
 	/* SPI data */
 	unsigned int gpio;
 	unsigned int active;
-
-	/* hda codec */
-	unsigned long codec_mask;
 
 	/* machine */
 	struct platform_device *pdev_mach;
