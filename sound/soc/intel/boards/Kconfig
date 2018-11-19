@@ -224,7 +224,7 @@ config SND_SOC_INTEL_SKL_NAU88L25_MAX98357A_MACH
 
 endif ## SND_SOC_INTEL_SKYLAKE
 
-if SND_SOC_INTEL_SKYLAKE || SND_SOC_SOF_APOLLOLAKE
+if SND_SOC_INTEL_SKYLAKE || SND_SOC_SOF_APOLLOLAKE && SND_SOC_SOF_HDA_LINK
 
 config SND_SOC_INTEL_BXT_DA7219_MAX98357A_MACH
 	tristate "Broxton with DA7219 and MAX98357A in I2S Mode"
@@ -252,6 +252,44 @@ config SND_SOC_INTEL_BXT_RT298_MACH
 	   with RT286 I2S audio codec.
 	   Say Y or m if you have such a device. This is a recommended option.
 	   If unsure select "N".
+
+endif
+
+if SND_SOC_SOF_APOLLOLAKE
+
+config SND_SOC_INTEL_BXT_PCM512x_MACH
+	tristate "Broxton with TI PCM512x codec"
+	depends on MFD_INTEL_LPSS && I2C && ACPI
+	select SND_SOC_PCM512x_I2C
+	help
+	  This adds support for ASoC machine driver for Broxton platforms
+	  with TI PCM512x I2S audio codec.
+	  Say Y or m if you have such a device. This is a recommended option.
+	  If unsure select "N".
+
+config SND_SOC_INTEL_BXT_WM8804_MACH
+	tristate "Broxton with Wolfson/Cirrus WM8804 codec for Hifiberry Digi+"
+	depends on MFD_INTEL_LPSS && I2C && ACPI
+	select SND_SOC_WM8804_I2C
+	help
+	  This adds support for ASoC machine driver for Broxton platforms
+	  with Hifiberry Digiplus w/ Wolfson/Cirrus WM8804 I2S audio codec.
+	  Say Y or m if you have such a device. This is a recommended option.
+	  If unsure select "N".
+
+endif
+
+if SND_SOC_INTEL_SKYLAKE || SND_SOC_SOF_APOLLOLAKE
+
+config SND_SOC_INTEL_BXT_TDF8532_MACH
+	tristate "ASoC Audio driver for BXT with TDF8532 in I2S mode"
+	depends on X86 && ACPI && I2C
+	select SND_SOC_TDF8532
+	select SND_SOC_COMPRESS
+	help
+	  This adds support for ASoC machine driver for Broxton IVI GP MRB platform
+	  Say Y if you have such a device.
+	  If unsure select "N".
 
 endif ##  SND_SOC_INTEL_SKYLAKE || SND_SOC_SOF_APOLLOLAKE
 
@@ -300,7 +338,7 @@ config SND_SOC_INTEL_CNL_RT274_MACH
 
 endif ## SND_SOC_INTEL_SKYLAKE
 
-if SND_SOC_INTEL_SKYLAKE || SND_SOC_SOF_HDA
+if SND_SOC_INTEL_SKYLAKE || SND_SOC_SOF_HDA_AUDIO_CODEC
 
 config SND_SOC_INTEL_SKL_HDA_DSP_GENERIC_MACH
 	tristate "SKL/KBL/BXT/APL with HDA Codecs"
@@ -314,7 +352,7 @@ config SND_SOC_INTEL_SKL_HDA_DSP_GENERIC_MACH
 
 endif ## SND_SOC_INTEL_SKYLAKE || SND_SOC_SOF_HDA
 
-if SND_SOC_INTEL_SKYLAKE || SND_SOC_SOF_GEMINILAKE
+if SND_SOC_INTEL_SKYLAKE || SND_SOC_SOF_GEMINILAKE && SND_SOC_SOF_HDA_LINK
 
 config SND_SOC_INTEL_GLK_RT5682_MAX98357A_MACH
 	tristate "ASoC Audio driver for Geminilake with RT5682 and MAX98357A in I2S Mode"
@@ -332,5 +370,21 @@ config SND_SOC_INTEL_GLK_RT5682_MAX98357A_MACH
 	   If unsure select "N".
 
 endif ## SND_SOC_INTEL_SKYLAKE || SND_SOC_SOF_GEMINILAKE
+
+if SND_SOC_INTEL_SKYLAKE || SND_SOC_SOF_CANNONLAKE && SND_SOC_SOF_HDA_LINK
+
+config SND_SOC_INTEL_CNL_RT274_MACH
+	tristate "Cannonlake with RT274 I2S mode"
+	depends on MFD_INTEL_LPSS && I2C && ACPI
+	select SND_SOC_RT274
+	select SND_SOC_DMIC
+	select SND_SOC_HDAC_HDMI
+        help
+	   This adds support for ASoC machine driver for Cannonlake platform
+	   with RT274 I2S audio codec.
+	   Say Y or m if you have such a device. This is a recommended option.
+	   If unsure select "N".
+
+endif ## SND_SOC_INTEL_SKYLAKE || SND_SOC_SOF_CANNONLAKE
 
 endif ## SND_SOC_INTEL_MACH
