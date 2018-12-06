@@ -7,10 +7,19 @@ config SND_SOC_SOF_ACPI
 config SND_SOC_SOF
 	tristate "Sound Open Firmware Support"
 	select SND_SOC_TOPOLOGY
+	select SND_SOC_COMPRESS if SND_SOC_SOF_COMPRESS=y
 	help
           This adds support for Sound Open Firmware (SOF). SOF is a free and
 	  generic open source audio DSP firmware for multiple devices.
           Say Y if you have such a device that is supported by SOF.
+          If unsure select "N".
+
+config SND_SOC_SOF_COMPRESS
+	bool "SOF ALSA Compressed API support"
+	depends on SND_SOC_SOF
+	help
+          This adds support for the ALSA compressed API in SOF
+	  Say Y if you need this option
           If unsure select "N".
 
 config SND_SOC_SOF_NOCODEC
