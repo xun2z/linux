@@ -58,7 +58,6 @@ static int sof_restore_pipelines(struct snd_sof_dev *sdev)
 {
 	struct snd_sof_widget *swidget = NULL;
 	struct snd_sof_route *sroute = NULL;
-	struct sof_ipc_pipe_new *pipeline;
 	struct snd_sof_dai *dai;
 	struct sof_ipc_comp_dai *comp_dai;
 	struct sof_ipc_cmd_hdr *hdr;
@@ -82,17 +81,6 @@ static int sof_restore_pipelines(struct snd_sof_dev *sdev)
 						 comp_dai->comp.hdr.cmd,
 						 comp_dai, sizeof(*comp_dai),
 						 &r, sizeof(r));
-			break;
-		case snd_soc_dapm_scheduler:
-
-			/*
-			 * During suspend, all DSP cores are powered off.
-			 * Therefore upon resume, create the pipeline comp
-			 * and power up the core that the pipeline is
-			 * scheduled on.
-			 */
-			pipeline = (struct sof_ipc_pipe_new *)swidget->private;
-			ret = sof_load_pipeline_ipc(sdev, pipeline, &r);
 			break;
 		default:
 			hdr = (struct sof_ipc_cmd_hdr *)swidget->private;
@@ -334,7 +322,7 @@ static int sof_suspend(struct device *dev, bool runtime_suspend)
 	/* drop all ipc */
 	sof_ipc_drop_all(sdev->ipc);
 
-	/* power down all DSP cores */
+	/* power down DSP */
 	if (runtime_suspend)
 		ret = snd_sof_dsp_runtime_suspend(sdev, 0);
 	else
