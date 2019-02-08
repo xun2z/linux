@@ -279,7 +279,7 @@ static struct snd_soc_card sof_audio_card_rt5682 = {
 };
 
 static const struct x86_cpu_id legacy_cpi_ids[] = {
-	{ X86_VENDOR_INTEL, 6, INTEL_FAM6_ATOM_SILVERMONT }, /* Baytrail */
+	{ X86_VENDOR_INTEL, 6, INTEL_FAM6_ATOM_SILVERMONT1 }, /* Baytrail */
 	{ X86_VENDOR_INTEL, 6, INTEL_FAM6_ATOM_AIRMONT }, /* Cherrytrail */
 	{}
 };
