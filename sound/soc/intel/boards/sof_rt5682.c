@@ -57,6 +57,15 @@ static int sof_rt5682_quirk_cb(const struct dmi_system_id *id)
 
 static const struct dmi_system_id sof_rt5682_quirk_table[] = {
 	{
+		/* Minnowboard Turbot */
+		.callback = sof_rt5682_quirk_cb,
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "ADI"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "Minnowboard Turbot"),
+		},
+		.driver_data = (void *)(SOF_RT5682_SSP(2)),
+	},
+	{
 		.callback = sof_rt5682_quirk_cb,
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "Intel Corporation"),
@@ -372,8 +381,6 @@ static int sof_audio_probe(struct platform_device *pdev)
 		is_legacy_cpu = 1;
 		dmic_num = 0;
 		hdmi_num = 0;
-		/* default quirk for legacy cpu */
-		sof_rt5682_quirk = SOF_RT5682_SSP(2);
 	} else {
 		dmic_num = 1;
 		hdmi_num = 3;
