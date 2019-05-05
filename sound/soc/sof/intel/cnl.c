@@ -64,13 +64,16 @@ static irqreturn_t cnl_ipc_irq_thread(int irq, void *context)
 					CNL_DSP_REG_HIPCCTL,
 					CNL_DSP_REG_HIPCCTL_DONE, 0);
 
-		/* handle immediate reply from DSP core */
-		hda_dsp_ipc_get_reply(sdev);
-		snd_sof_ipc_reply(sdev, msg);
-
+		/* wake up sleeper and no reply if we are loading code */
 		if (sdev->code_loading)	{
 			sdev->code_loading = 0;
 			wake_up(&sdev->waitq);
+		} else {
+			/* handle immediate reply from DSP core */
+			if (hda_dsp_ipc_is_sof(msg)) {
+				hda_dsp_ipc_get_reply(sdev);
+				snd_sof_ipc_reply(sdev, msg);
+			}
 		}
 
 		cnl_ipc_dsp_done(sdev);

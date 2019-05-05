@@ -504,6 +504,7 @@ int hda_ipc_pcm_params(struct snd_sof_dev *sdev,
 int hda_dsp_ipc_send_msg(struct snd_sof_dev *sdev,
 			 struct snd_sof_ipc_msg *msg);
 void hda_dsp_ipc_get_reply(struct snd_sof_dev *sdev);
+bool hda_dsp_ipc_is_sof(uint32_t msg);
 int hda_dsp_ipc_fw_ready(struct snd_sof_dev *sdev, u32 msg_id);
 irqreturn_t hda_dsp_ipc_irq_handler(int irq, void *context);
 irqreturn_t hda_dsp_ipc_irq_thread(int irq, void *context);

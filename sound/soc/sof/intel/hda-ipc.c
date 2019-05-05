@@ -126,7 +126,7 @@ out:
 	spin_unlock_irqrestore(&sdev->ipc_lock, flags);
 }
 
-static bool hda_dsp_ipc_is_sof(uint32_t msg)
+bool hda_dsp_ipc_is_sof(uint32_t msg)
 {
 	return (msg & (HDA_DSP_IPC_PURGE_FW | 0xf << 9)) != msg ||
 		(msg & HDA_DSP_IPC_PURGE_FW) != HDA_DSP_IPC_PURGE_FW;
@@ -172,16 +172,16 @@ irqreturn_t hda_dsp_ipc_irq_thread(int irq, void *context)
 					HDA_DSP_REG_HIPCCTL,
 					HDA_DSP_REG_HIPCCTL_DONE, 0);
 
-		/* handle immediate reply from DSP core - ignore ROM messages */
-		if (hda_dsp_ipc_is_sof(msg)) {
-			hda_dsp_ipc_get_reply(sdev);
-			snd_sof_ipc_reply(sdev, msg);
-		}
-
-		/* wake up sleeper if we are loading code */
+		/* wake up sleeper and no reply if we are loading code */
 		if (sdev->code_loading)	{
 			sdev->code_loading = 0;
 			wake_up(&sdev->waitq);
+		} else {
+			/* handle immediate reply from DSP core */
+			if (hda_dsp_ipc_is_sof(msg)) {
+				hda_dsp_ipc_get_reply(sdev);
+				snd_sof_ipc_reply(sdev, msg);
+			}
 		}
 
 		/* set the done bit */
